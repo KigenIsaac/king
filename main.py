@@ -82,20 +82,21 @@ async def websocket_task():
     except websockets.WebSocketException as e:
         logging.error(f"WebSocket connection failed: {e}")
 
+scheduler = AsyncIOScheduler(executors={'default': AsyncIOExecutor()})
+scheduler.add_job(websocket_task, 'interval', minutes=1)
+scheduler.start()
+
 @app.route('/king', methods=['GET'])
 def run():
     if running:
         return jsonify({'status': 'already running'})
     else:
+        running = True
         start_scheduler()
         return jsonify({'status': 'started successfully'})
 
 def start_scheduler():
     """Start the scheduler and run the event loop."""
-    scheduler = AsyncIOScheduler(executors={'default': AsyncIOExecutor()})
-    scheduler.add_job(websocket_task, 'interval', minutes=1)
-    scheduler.start()
-
     try:
         asyncio.get_event_loop().run_forever()
     except (KeyboardInterrupt, SystemExit):
