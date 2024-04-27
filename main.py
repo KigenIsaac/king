@@ -1,60 +1,108 @@
-from flask import Flask, request, jsonify
 import json
 import websockets
 import psycopg2
-from apscheduler.schedulers.background import BackgroundScheduler
+import asyncio
+from urllib.parse import urlparse
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.executors.asyncio import AsyncIOExecutor
+from flask import Flask, jsonify
+import logging
 
+logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
 
+# Database URL parsing
+db_url = urlparse('postgres://king:pV7dmgZHFTL8vPmH05p7LxlygdU8h10g@dpg-combr9ol6cac73d4tvd0-a.oregon-postgres.render.com/king_l0v7')
+
 # Database configuration
 db_config = {
-    'dbname': 'your_database',
-    'user': 'your_username',
-    'password': 'your_password',
-    'host': 'localhost'
+    'dbname': db_url.path[1:],
+    'user': db_url.username,
+    'password': db_url.password,
+    'host': db_url.hostname,
+    'port': db_url.port
 }
 
-# Function to create a database connection
-def get_db_connection():
-    conn = psycopg2.connect(**db_config)
-    return conn
-# Function to save tick data to the database
-def save_tick_data(price, epoch):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO tick_data (price, epoch) VALUES (%s, %s)", (price, epoch))
-    conn.commit()
-    cursor.close()
-    conn.close()
+# Database connection pool
+from psycopg2 import pool
+db_pool = pool.SimpleConnectionPool(1, 10, **db_config)
 
-# Function to handle WebSocket connection and messages
-async def websocket_task():
-    uri = 'wss://ws.derivws.com/websockets/v3?app_id=1089'
-    async with websockets.connect(uri) as ws:
-        await ws.send('{ "ticks_history": "R_50", "adjust_start_time": 1, "count": 10, "end": "latest", "start": 1, "style": "ticks"}')
-        message = await ws.recv()
-        message_data = json.loads(message)
-        # Assuming the message data contains 'tick' with 'price' and 'epoch'
-        if 'tick' in message_data:
-            price = message_data['tick']['quote']
-            epoch = message_data['tick']['epoch']
-            save_tick_data(price, epoch)
-        await ws.close()
-
-# Scheduler to run the WebSocket task every 10 minutes
-scheduler = BackgroundScheduler()
-scheduler.add_job(websocket_task, 'interval', minutes=10)
-scheduler.start()
-
-# Flask route to test database connection
 @app.route('/', methods=['GET'])
 def test_db():
-    conn = get_db_connection()
-    # Perform database operations
-    conn.close()
-    return jsonify({'status': 'success'})
+    try:
+        conn = db_pool.getconn()
+        if conn:
+            db_pool.putconn(conn)
+            return jsonify({'status': 'success'})
+        else:
+            return jsonify({'status': 'error', 'message': 'Database connection failed'}), 500
+    except Exception as e:
+        logging.error(f"Error in test_db route: {e}")
+        return jsonify({'status': 'error', 'message': 'An error occurred'}), 500
 
-# Start the Flask app
+def get_latest_epoch():
+    """Retrieve the latest epoch value from the database."""
+    conn = db_pool.getconn()
+    latest_epoch = 0
+    if conn:
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT MAX(epoch) FROM tick_data")
+                result = cursor.fetchone()
+                if result[0] is not None:
+                    latest_epoch = result[0]
+                logging.info(latest_epoch)
+        except psycopg2.Error as e:
+            logging.error(f"Failed to get latest epoch: {e}")
+        finally:
+            db_pool.putconn(conn)
+    return latest_epoch
+
+def save_tick_data_batch(tick_data):
+    """Save a batch of tick data to the database."""
+    conn = db_pool.getconn()
+    if conn:
+        try:
+            with conn.cursor() as cursor:
+                # Filter out data that is older than the latest epoch in the database
+                latest_epoch = get_latest_epoch()
+                new_data = [(price, epoch) for price, epoch in tick_data if epoch > latest_epoch]
+                if new_data:
+                    cursor.executemany("INSERT INTO tick_data (price, epoch) VALUES (%s, %s)", new_data)
+                    conn.commit()
+                    logging.info("New tick data saved.")
+        except psycopg2.Error as e:
+            logging.error(f"Failed to save tick data batch: {e}")
+        finally:
+            db_pool.putconn(conn)
+
+
+async def websocket_task():
+    uri = 'wss://ws.derivws.com/websockets/v3?app_id=1089'
+    try:
+        async with websockets.connect(uri) as ws:
+            await ws.send('{ "ticks_history": "R_50", "adjust_start_time": 1, "count": 120, "end": "latest", "start": 1, "style": "ticks"}')
+            message = await ws.recv()
+            message_data = json.loads(message)
+            if message_data["msg_type"] == "history":
+                logging.info('found')
+                prices = message_data['history']['prices']
+                times = message_data['history']['times']
+                # Use execute many for batch insertion
+                tick_data = [(price, epoch) for price, epoch in zip(prices, times)]
+                save_tick_data_batch(tick_data)
+    except websockets.WebSocketException as e:
+        logging.error(f"WebSocket connection failed: {e}")
+
+scheduler = AsyncIOScheduler(executors={'default': AsyncIOExecutor()})
+scheduler.add_job(websocket_task, 'interval', minutes=1)
+scheduler.start()
+
+try:
+    asyncio.get_event_loop().run_forever()
+except (KeyboardInterrupt, SystemExit):
+    pass
+
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=False)
