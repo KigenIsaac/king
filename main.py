@@ -12,8 +12,10 @@ logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
 
+# Database URL parsing
 db_url = urlparse('postgres://king:pV7dmgZHFTL8vPmH05p7LxlygdU8h10g@dpg-combr9ol6cac73d4tvd0-a/king_l0v7')
 
+# Database configuration
 db_config = {
     'dbname': db_url.path[1:],
     'user': db_url.username,
@@ -22,6 +24,7 @@ db_config = {
     'port': db_url.port
 }
 
+# Database connection pool
 from psycopg2 import pool
 db_pool = pool.SimpleConnectionPool(1, 10, **db_config)
 
@@ -62,6 +65,7 @@ def save_tick_data_batch(tick_data):
     if conn:
         try:
             with conn.cursor() as cursor:
+                # Filter out data that is older than the latest epoch in the database
                 latest_epoch = get_latest_epoch()
                 new_data = [(price, epoch) for price, epoch in tick_data if epoch > latest_epoch]
                 if new_data:
@@ -85,25 +89,19 @@ async def websocket_task():
                 logging.info('found')
                 prices = message_data['history']['prices']
                 times = message_data['history']['times']
+                # Use execute many for batch insertion
                 tick_data = [(price, epoch) for price, epoch in zip(prices, times)]
                 save_tick_data_batch(tick_data)
     except websockets.WebSocketException as e:
         logging.error(f"WebSocket connection failed: {e}")
 
-def start_websocket_task():
-    loop = asyncio.get_event_loop()
-    loop.create_task(websocket_task())
-
 scheduler = AsyncIOScheduler(executors={'default': AsyncIOExecutor()})
-scheduler.add_job(start_websocket_task, 'interval', minutes=1)
+scheduler.add_job(websocket_task, 'interval', minutes=1)
 scheduler.start()
 
-try:
-    asyncio.get_event_loop().run_forever()
-except (KeyboardInterrupt, SystemExit):
-    pass
-
 if __name__ == '__main__':
-    app.run(debug=False)
-
-
+    app.run(debug=False, host='0.0.0.0', port=5000)
+    try:
+        asyncio.get_event_loop().run_forever()
+    except (KeyboardInterrupt, SystemExit):
+        pass
