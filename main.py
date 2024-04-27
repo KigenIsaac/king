@@ -5,6 +5,7 @@ import asyncio
 from urllib.parse import urlparse
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.executors.asyncio import AsyncIOExecutor
+from fastapi import FastAPI
 import logging
 
 logging.basicConfig(level=logging.INFO)
@@ -81,12 +82,21 @@ scheduler = AsyncIOScheduler(executors={'default': AsyncIOExecutor()})
 scheduler.add_job(websocket_task, 'interval', minutes=1)
 scheduler.start()
 
+app = FastAPI()
+
+@app.get("/start_data_collection")
+async def start_data_collection():
+    # Start the data collection task
+    scheduler.add_job(websocket_task, 'interval', minutes=1)
+    return {"message": "Data collection started."}
+
+@app.get("/stop_data_collection")
+async def stop_data_collection():
+    # Stop the data collection task
+    scheduler.remove_job('interval')
+    return {"message": "Data collection stopped."}
+
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    try:
-        loop.run_until_complete(websocket_task())
-    except (KeyboardInterrupt, SystemExit):
-        logging.info("Script terminated by user.")
-    finally:
-        loop.close()
-        
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+            
