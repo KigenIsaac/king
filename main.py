@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.INFO)
 app = Flask(__name__)
 
 # Database URL parsing
-db_url = urlparse('postgres://king:pV7dmgZHFTL8vPmH05p7LxlygdU8h10g@dpg-combr9ol6cac73d4tvd0-a.oregon-postgres.render.com/king_l0v7')
+db_url = urlparse('postgres://king:pV7dmgZHFTL8vPmH05p7LxlygdU8h10g@dpg-combr9ol6cac73d4tvd0-a/king_l0v7')
 
 # Database configuration
 db_config = {
