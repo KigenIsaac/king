@@ -5,13 +5,10 @@ import asyncio
 from urllib.parse import urlparse
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.executors.asyncio import AsyncIOExecutor
-from flask import Flask, jsonify
 import logging
 
 logging.basicConfig(level=logging.INFO)
 
-app = Flask(__name__)
-running = False
 # Database URL parsing
 db_url = urlparse('postgres://king:pV7dmgZHFTL8vPmH05p7LxlygdU8h10g@dpg-combr9ol6cac73d4tvd0-a/king_l0v7')
 
@@ -86,32 +83,13 @@ scheduler = AsyncIOScheduler(executors={'default': AsyncIOExecutor()})
 scheduler.add_job(websocket_task, 'interval', minutes=1)
 scheduler.start()
 
-@app.route('/king', methods=['GET'])
-def run():
-    global running
-    if running:
-        return jsonify({'status': 'already running'})
-    else:
-        running = True
-        try:
-            asyncio.get_event_loop().run_forever()
-        except (KeyboardInterrupt, SystemExit):
-            pass
-        return jsonify({'status': 'started successfully'})
 
-@app.route('/', methods=['GET'])
-def test_db():
+if __name__ == "__main__":
+    loop = asyncio.get_event_loop()
     try:
-        conn = db_pool.getconn()
-        if conn:
-            db_pool.putconn(conn)
-            return jsonify({'status': 'success'})
-        else:
-            return jsonify({'status': 'error', 'message': 'Database connection failed'}), 500
-    except Exception as e:
-        logging.error(f"Error in test_db route: {e}")
-        return jsonify({'status': 'error', 'message': 'An error occurred'}), 500
-
-if __name__ == '__main__':
-    app.run(debug=False, host='0.0.0.0', port=5000)
+        loop.run_until_complete(websocket_task())
+    except KeyboardInterrupt:
+        pass
+    finally:
+        loop.close()
     
