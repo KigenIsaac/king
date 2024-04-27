@@ -77,6 +77,23 @@ def save_tick_data_batch(tick_data):
         finally:
             db_pool.putconn(conn)
 
+async def websocket_task():
+    uri = 'wss://ws.derivws.com/websockets/v3?app_id=1089'
+    try:
+        async with websockets.connect(uri) as ws:
+            await ws.send('{ "ticks_history": "R_50", "adjust_start_time": 1, "count": 120, "end": "latest", "start": 1, "style": "ticks"}')
+            message = await ws.recv()
+            message_data = json.loads(message)
+            if message_data["msg_type"] == "history":
+                logging.info('found')
+                prices = message_data['history']['prices']
+                times = message_data['history']['times']
+                # Use execute many for batch insertion
+                tick_data = [(price, epoch) for price, epoch in zip(prices, times)]
+                save_tick_data_batch(tick_data)
+    except websockets.WebSocketException as e:
+        logging.error(f"WebSocket connection failed: {e}")
+
 def start_scheduler():
     """Start the scheduler and run the event loop."""
     scheduler = AsyncIOScheduler(executors={'default': AsyncIOExecutor()})
