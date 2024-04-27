@@ -99,7 +99,7 @@ scheduler.add_job(start_websocket_task, 'interval', minutes=1)
 scheduler.start()
 
 if __name__ == '__main__':
-    app.run(debug=False, host='0.0.0.0', port=5000)
+    app.run(debug=False)
 
 try:
     asyncio.get_event_loop().run_forever()
