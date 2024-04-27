@@ -25,41 +25,40 @@ db_config = {
 from psycopg2 import pool
 db_pool = pool.SimpleConnectionPool(1, 10, **db_config)
 
-
 def get_latest_epoch():
     """Retrieve the latest epoch value from the database."""
-    conn = db_pool.getconn()
-    latest_epoch = 0
-    if conn:
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute("SELECT MAX(epoch) FROM tick_data")
-                result = cursor.fetchone()
-                if result[0] is not None:
-                    latest_epoch = result[0]
-                logging.info(latest_epoch)
-        except psycopg2.Error as e:
-            logging.error(f"Failed to get latest epoch: {e}")
-        finally:
+    conn = None
+    try:
+        conn = db_pool.getconn()
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT MAX(epoch) FROM tick_data")
+            result = cursor.fetchone()
+            if result[0] is not None:
+                return result[0]
+    except psycopg2.Error as e:
+        logging.error(f"Failed to get latest epoch: {e}")
+    finally:
+        if conn:
             db_pool.putconn(conn)
-    return latest_epoch
+    return 0
 
 def save_tick_data_batch(tick_data):
     """Save a batch of tick data to the database."""
-    conn = db_pool.getconn()
-    if conn:
-        try:
-            with conn.cursor() as cursor:
-                # Filter out data that is older than the latest epoch in the database
-                latest_epoch = get_latest_epoch()
-                new_data = [(price, epoch) for price, epoch in tick_data if epoch > latest_epoch]
-                if new_data:
-                    cursor.executemany("INSERT INTO tick_data (price, epoch) VALUES (%s, %s)", new_data)
-                    conn.commit()
-                    logging.info("New tick data saved.")
-        except psycopg2.Error as e:
-            logging.error(f"Failed to save tick data batch: {e}")
-        finally:
+    conn = None
+    try:
+        conn = db_pool.getconn()
+        with conn.cursor() as cursor:
+            # Filter out data that is older than the latest epoch in the database
+            latest_epoch = get_latest_epoch()
+            new_data = [(price, epoch) for price, epoch in tick_data if epoch > latest_epoch]
+            if new_data:
+                cursor.executemany("INSERT INTO tick_data (price, epoch) VALUES (%s, %s)", new_data)
+                conn.commit()
+                logging.info("New tick data saved.")
+    except psycopg2.Error as e:
+        logging.error(f"Failed to save tick data batch: {e}")
+    finally:
+        if conn:
             db_pool.putconn(conn)
 
 async def websocket_task():
@@ -70,26 +69,24 @@ async def websocket_task():
             message = await ws.recv()
             message_data = json.loads(message)
             if message_data["msg_type"] == "history":
-                logging.info('found')
                 prices = message_data['history']['prices']
                 times = message_data['history']['times']
                 # Use execute many for batch insertion
                 tick_data = [(price, epoch) for price, epoch in zip(prices, times)]
                 save_tick_data_batch(tick_data)
     except websockets.WebSocketException as e:
-        logging.error(f"WebSocket connection failed: {e}")
+        logging.error(f"WebSocket connection error: {e}")
 
 scheduler = AsyncIOScheduler(executors={'default': AsyncIOExecutor()})
 scheduler.add_job(websocket_task, 'interval', minutes=1)
 scheduler.start()
 
-
 if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     try:
         loop.run_until_complete(websocket_task())
-    except KeyboardInterrupt:
-        pass
+    except (KeyboardInterrupt, SystemExit):
+        logging.info("Script terminated by user.")
     finally:
         loop.close()
-    
+        
