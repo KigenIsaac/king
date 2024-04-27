@@ -93,7 +93,6 @@ def run():
         return jsonify({'status': 'already running'})
     else:
         running = True
-        start_scheduler()
         try:
             asyncio.get_event_loop().run_forever()
         except (KeyboardInterrupt, SystemExit):
