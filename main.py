@@ -99,9 +99,11 @@ scheduler = AsyncIOScheduler(executors={'default': AsyncIOExecutor()})
 scheduler.add_job(websocket_task, 'interval', minutes=1)
 scheduler.start()
 
-if __name__ == '__main__':
-    app.run(debug=False, host='0.0.0.0', port=5000)
-    try:
+try:
         asyncio.get_event_loop().run_forever()
     except (KeyboardInterrupt, SystemExit):
         pass
+
+if __name__ == '__main__':
+    app.run(debug=False, host='0.0.0.0', port=5000)
+    
