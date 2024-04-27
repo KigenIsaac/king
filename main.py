@@ -1,5 +1,6 @@
 import json
 import websockets
+import psycopg2
 import asyncio
 from urllib.parse import urlparse
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -23,16 +24,16 @@ db_config = {
     'port': db_url.port
 }
 
-# Database connection pool using pg8000
-import pg8000.native
-db_pool = pg8000.native.ConnectionPool(**db_config)
+# Database connection pool
+from psycopg2 import pool
+db_pool = pool.SimpleConnectionPool(1, 10, **db_config)
 
 @app.route('/', methods=['GET'])
 def test_db():
     try:
-        conn = db_pool.get_connection()
+        conn = db_pool.getconn()
         if conn:
-            conn.run("SELECT 1")
+            db_pool.putconn(conn)
             return jsonify({'status': 'success'})
         else:
             return jsonify({'status': 'error', 'message': 'Database connection failed'}), 500
@@ -42,35 +43,40 @@ def test_db():
 
 def get_latest_epoch():
     """Retrieve the latest epoch value from the database."""
-    conn = db_pool.get_connection()
+    conn = db_pool.getconn()
     latest_epoch = 0
     if conn:
         try:
-            result = conn.run("SELECT MAX(epoch) FROM tick_data")
-            if result and result[0][0] is not None:
-                latest_epoch = result[0][0]
-            logging.info(latest_epoch)
-        except Exception as e:
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT MAX(epoch) FROM tick_data")
+                result = cursor.fetchone()
+                if result[0] is not None:
+                    latest_epoch = result[0]
+                logging.info(latest_epoch)
+        except psycopg2.Error as e:
             logging.error(f"Failed to get latest epoch: {e}")
         finally:
-            conn.close()
+            db_pool.putconn(conn)
     return latest_epoch
 
 def save_tick_data_batch(tick_data):
     """Save a batch of tick data to the database."""
-    conn = db_pool.get_connection()
+    conn = db_pool.getconn()
     if conn:
         try:
-            # Filter out data that is older than the latest epoch in the database
-            latest_epoch = get_latest_epoch()
-            new_data = [(price, epoch) for price, epoch in tick_data if epoch > latest_epoch]
-            if new_data:
-                conn.run("INSERT INTO tick_data (price, epoch) VALUES (%s, %s)", new_data)
-                logging.info("New tick data saved.")
-        except Exception as e:
+            with conn.cursor() as cursor:
+                # Filter out data that is older than the latest epoch in the database
+                latest_epoch = get_latest_epoch()
+                new_data = [(price, epoch) for price, epoch in tick_data if epoch > latest_epoch]
+                if new_data:
+                    cursor.executemany("INSERT INTO tick_data (price, epoch) VALUES (%s, %s)", new_data)
+                    conn.commit()
+                    logging.info("New tick data saved.")
+        except psycopg2.Error as e:
             logging.error(f"Failed to save tick data batch: {e}")
         finally:
-            conn.close()
+            db_pool.putconn(conn)
+
 
 async def websocket_task():
     uri = 'wss://ws.derivws.com/websockets/v3?app_id=1089'
@@ -100,4 +106,4 @@ except (KeyboardInterrupt, SystemExit):
 
 if __name__ == '__main__':
     app.run(debug=False, host='0.0.0.0', port=5000)
-        
+
