@@ -11,7 +11,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 
 app = Flask(__name__)
-
+running = False
 # Database URL parsing
 db_url = urlparse('postgres://king:pV7dmgZHFTL8vPmH05p7LxlygdU8h10g@dpg-combr9ol6cac73d4tvd0-a/king_l0v7')
 
@@ -28,18 +28,6 @@ db_config = {
 from psycopg2 import pool
 db_pool = pool.SimpleConnectionPool(1, 10, **db_config)
 
-@app.route('/', methods=['GET'])
-def test_db():
-    try:
-        conn = db_pool.getconn()
-        if conn:
-            db_pool.putconn(conn)
-            return jsonify({'status': 'success'})
-        else:
-            return jsonify({'status': 'error', 'message': 'Database connection failed'}), 500
-    except Exception as e:
-        logging.error(f"Error in test_db route: {e}")
-        return jsonify({'status': 'error', 'message': 'An error occurred'}), 500
 
 def get_latest_epoch():
     """Retrieve the latest epoch value from the database."""
@@ -94,6 +82,14 @@ async def websocket_task():
     except websockets.WebSocketException as e:
         logging.error(f"WebSocket connection failed: {e}")
 
+@app.route('/king', methods=['GET'])
+def run():
+    if running:
+        return jsonify({'status': 'already running'})
+    else:
+        start_scheduler()
+        return jsonify({'status': 'started successfully'})
+
 def start_scheduler():
     """Start the scheduler and run the event loop."""
     scheduler = AsyncIOScheduler(executors={'default': AsyncIOExecutor()})
@@ -105,7 +101,19 @@ def start_scheduler():
     except (KeyboardInterrupt, SystemExit):
         pass
 
+@app.route('/', methods=['GET'])
+def test_db():
+    try:
+        conn = db_pool.getconn()
+        if conn:
+            db_pool.putconn(conn)
+            return jsonify({'status': 'success'})
+        else:
+            return jsonify({'status': 'error', 'message': 'Database connection failed'}), 500
+    except Exception as e:
+        logging.error(f"Error in test_db route: {e}")
+        return jsonify({'status': 'error', 'message': 'An error occurred'}), 500
+
 if __name__ == '__main__':
     app.run(debug=False, host='0.0.0.0', port=5000)
-    start_scheduler()
     
